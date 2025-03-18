@@ -51,34 +51,77 @@ export default function Dashboard() {
   const [channels, setChannels] = useState<Channel[]>([]);
   const [activeSection, setActiveSection] = useState("overview");
   const navigate = useNavigate();
+  const [uploadingImage, setUploadingImage] = useState(false);
+  const [profileImage, setProfileImage] = useState<string | null>(
+    user?.user_metadata?.avatar_url || null
+  );
+  const handleImageUpload = async (
+    event: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    try {
+      const file = event.target.files?.[0];
+      if (!file || !user) return;
 
-  // Effect to fetch monthly views and linked channels
+      setUploadingImage(true);
+
+      // Upload image to Supabase Storage
+      const fileExt = file.name.split(".").pop();
+      const fileName = `${user.id}-${Math.random()}.${fileExt}`;
+      const filePath = `/${user.id}/${fileName}`;
+
+      const { error: uploadError, data } = await supabase.storage
+        .from("profile-pictures")
+        .upload(filePath, file);
+
+      if (uploadError) throw uploadError;
+
+      // Get public URL
+      const {
+        data: { publicUrl },
+      } = supabase.storage.from("profile-pictures").getPublicUrl(filePath);
+
+      // Update user metadata
+      const { error: updateError } = await supabase.auth.updateUser({
+        data: { avatar_url: publicUrl },
+      });
+
+      if (updateError) throw updateError;
+
+      setProfileImage(publicUrl);
+    } catch (error) {
+      console.error("Error uploading image:", error);
+    } finally {
+      setUploadingImage(false);
+    }
+  };
   useEffect(() => {
     if (!user) return;
 
     const fetchStats = async () => {
       try {
         // Get current month's views
-        const { data: viewsData, error: viewsError } = await supabase
-          .rpc('get_total_monthly_views', {
+        const { data: viewsData, error: viewsError } = await supabase.rpc(
+          "get_total_monthly_views",
+          {
             p_user_id: user.id,
-            p_month: new Date().toISOString().slice(0, 10)
-          });
+            p_month: new Date().toISOString().slice(0, 10),
+          }
+        );
 
         if (viewsError) throw viewsError;
         setMonthlyViews(viewsData || 0);
 
         // Get linked channels count
         const { data: requestData, error: requestError } = await supabase
-          .from('user_requests')
-          .select('youtube_links')
-          .eq('user_id', user.id)
+          .from("user_requests")
+          .select("youtube_links")
+          .eq("user_id", user.id)
           .single();
 
         if (requestError) throw requestError;
         setLinkedChannels(requestData?.youtube_links?.length || 0);
       } catch (error) {
-        console.error('Error fetching stats:', error);
+        console.error("Error fetching stats:", error);
       }
     };
 
@@ -95,73 +138,79 @@ export default function Dashboard() {
 
     const fetchNotifications = async () => {
       const { data, error } = await supabase
-        .from('notifications')
-        .select('*')
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: false });
+        .from("notifications")
+        .select("*")
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false });
 
       if (error) {
-        console.error('Error fetching notifications:', error);
+        console.error("Error fetching notifications:", error);
         return;
       }
 
-      setNotifications(data.map(notification => ({
-        id: notification.id,
-        title: notification.title,
-        content: notification.content,
-        time: formatRelativeTime(notification.created_at),
-        read: notification.read
-      })));
+      setNotifications(
+        data.map((notification) => ({
+          id: notification.id,
+          title: notification.title,
+          content: notification.content,
+          time: formatRelativeTime(notification.created_at),
+          read: notification.read,
+        }))
+      );
     };
 
     fetchNotifications();
 
     // Subscribe to new notifications
     const subscription = supabase
-      .channel('notifications')
-      .on('postgres_changes', {
-        event: '*',
-        schema: 'public',
-        table: 'notifications',
-        filter: `user_id=eq.${user.id}`
-      }, async (payload) => {
-        if (payload.eventType === 'INSERT') {
-          const newNotification = {
-            id: payload.new.id,
-            title: payload.new.title,
-            content: payload.new.content,
-            time: formatRelativeTime(payload.new.created_at),
-            read: payload.new.read
-          };
-          
-          setNotifications(prev => [newNotification, ...prev]);
-          setHasNewNotification(true);
-          
-          // Play notification sound
-          const audio = new Audio('/notification.mp3');
-          audio.play().catch(() => {}); // Ignore errors if sound can't play
+      .channel("notifications")
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "notifications",
+          filter: `user_id=eq.${user.id}`,
+        },
+        async (payload) => {
+          if (payload.eventType === "INSERT") {
+            const newNotification = {
+              id: payload.new.id,
+              title: payload.new.title,
+              content: payload.new.content,
+              time: formatRelativeTime(payload.new.created_at),
+              read: payload.new.read,
+            };
+
+            setNotifications((prev) => [newNotification, ...prev]);
+            setHasNewNotification(true);
+
+            // Play notification sound
+            const audio = new Audio("/notification.mp3");
+            audio.play().catch(() => {}); // Ignore errors if sound can't play
+          }
         }
-      })
+      )
       .subscribe();
 
     return () => {
       subscription.unsubscribe();
     };
   }, [user]);
-  
+
   // Effect to check for unread messages
   useEffect(() => {
     if (!user) return;
-    
+
     const checkUnreadMessages = async () => {
       const { data: messages, error } = await supabase
-        .from('messages')
-        .select('*')
-        .eq('receiver_id', user.id)
-        .is('read_at', null);
+        .from("messages")
+        .select("*")
+        .eq("receiver_id", user.id)
+        .is("read_at", null);
 
       if (error) {
-        console.error('Error checking unread messages:', error);
+        console.error("Error checking unread messages:", error);
         return;
       }
 
@@ -172,15 +221,19 @@ export default function Dashboard() {
 
     // Subscribe to new messages
     const subscription = supabase
-      .channel('messages')
-      .on('postgres_changes', {
-        event: '*',
-        schema: 'public',
-        table: 'messages',
-        filter: `receiver_id=eq.${user.id}`
-      }, () => {
-        checkUnreadMessages();
-      })
+      .channel("messages")
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "messages",
+          filter: `receiver_id=eq.${user.id}`,
+        },
+        () => {
+          checkUnreadMessages();
+        }
+      )
       .subscribe();
 
     return () => {
@@ -190,7 +243,7 @@ export default function Dashboard() {
 
   // Effect to handle notification animation
   useEffect(() => {
-    if (notifications.some(n => !n.read)) {
+    if (notifications.some((n) => !n.read)) {
       setHasNewNotification(true);
       // Reset the animation after it plays
       const timer = setTimeout(() => {
@@ -211,15 +264,15 @@ export default function Dashboard() {
   const clearNotifications = () => {
     // Update notifications as read in database
     if (!user) return;
-    
+
     const updateNotifications = async () => {
       const { error } = await supabase
-        .from('notifications')
+        .from("notifications")
         .update({ read: true })
-        .eq('user_id', user.id);
+        .eq("user_id", user.id);
 
       if (error) {
-        console.error('Error clearing notifications:', error);
+        console.error("Error clearing notifications:", error);
         return;
       }
 
@@ -233,19 +286,19 @@ export default function Dashboard() {
   const markAllAsRead = () => {
     // Mark all notifications as read in database
     if (!user) return;
-    
+
     const updateNotifications = async () => {
       const { error } = await supabase
-        .from('notifications')
+        .from("notifications")
         .update({ read: true })
-        .eq('user_id', user.id);
+        .eq("user_id", user.id);
 
       if (error) {
-        console.error('Error marking notifications as read:', error);
+        console.error("Error marking notifications as read:", error);
         return;
       }
 
-      setNotifications(prev => prev.map(n => ({ ...n, read: true })));
+      setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
       setHasNewNotification(false);
     };
 
@@ -256,16 +309,22 @@ export default function Dashboard() {
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       const target = event.target as HTMLElement;
-      if (!target.closest('.notifications-dropdown') && !target.closest('.notifications-button')) {
+      if (
+        !target.closest(".notifications-dropdown") &&
+        !target.closest(".notifications-button")
+      ) {
         setShowNotifications(false);
       }
-      if (!target.closest('.settings-dropdown') && !target.closest('.settings-button')) {
+      if (
+        !target.closest(".settings-dropdown") &&
+        !target.closest(".settings-button")
+      ) {
         setShowSettings(false);
       }
     };
 
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
   useEffect(() => {
@@ -290,7 +349,7 @@ export default function Dashboard() {
       name: "Analytics",
       section: "analytics",
       icon: <BarChart3 className="h-5 w-5" />,
-      count: "12"
+      count: "12",
     },
     {
       name: "Channel Management",
@@ -311,7 +370,9 @@ export default function Dashboard() {
 
   const userStats = {
     joinDate: new Date(user?.created_at || Date.now()).toLocaleDateString(),
-    lastLogin: new Date(user?.last_sign_in_at || Date.now()).toLocaleDateString(),
+    lastLogin: new Date(
+      user?.last_sign_in_at || Date.now()
+    ).toLocaleDateString(),
     accountType: "Pro User",
     contentCount: 156,
   };
@@ -345,15 +406,40 @@ export default function Dashboard() {
           <div className="flex flex-1 flex-col overflow-y-auto pt-5 pb-4">
             {/* User Profile Summary */}
             <div className="px-6 py-8 text-center">
-              <div className="h-24 w-24 rounded-full bg-indigo-600 mx-auto mb-4 flex items-center justify-center text-white text-3xl font-bold relative group">
-                <div className="absolute inset-0 rounded-full bg-white/40 filter blur-xl opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
-                <div className="absolute -inset-1 rounded-full bg-white/20 filter blur-lg opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
-                <div className="absolute inset-0 rounded-full animate-pulse ring-2 ring-white/60 group-hover:ring-white transition-all duration-300"></div>
-                {user?.user_metadata?.full_name?.[0]?.toUpperCase() || (
-                  <UserCircle className="h-16 w-16" />
-                )}
-                <div className="absolute -inset-2 bg-white rounded-full opacity-0 group-hover:opacity-20 blur-2xl transition-opacity duration-300"></div>
+              <div className="relative group">
+                <div className="h-24 w-24 rounded-full bg-indigo-600 mx-auto mb-4 flex items-center justify-center text-white text-3xl font-bold relative overflow-hidden">
+                  {profileImage ? (
+                    <img
+                      src={profileImage}
+                      alt="Profile"
+                      className="h-full w-full object-cover"
+                    />
+                  ) : (
+                    user?.user_metadata?.full_name?.[0]?.toUpperCase() || (
+                      <UserCircle className="h-16 w-16" />
+                    )
+                  )}
+
+                  {/* Upload overlay */}
+                  <label className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center opacity-0 group-hover:opacity-100 cursor-pointer transition-opacity duration-200">
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={handleImageUpload}
+                      disabled={uploadingImage}
+                    />
+                    {uploadingImage ? (
+                      <div className="animate-spin rounded-full h-6 w-6 border-2 border-white border-t-transparent" />
+                    ) : (
+                      <span className="text-white text-sm">Update</span>
+                    )}
+                  </label>
+                </div>
+
+                {/* Existing effects */}
               </div>
+
               <h2 className="text-xl font-bold text-white mb-1">
                 Welcome,{" "}
                 {user?.user_metadata?.full_name?.split(" ")[0] || "User"}!
@@ -479,7 +565,7 @@ export default function Dashboard() {
         </div>
 
         <main className="flex-1">
-          <div className="py-6 relative">
+          <div className="py-6">
             {/* Background gradient effects */}
             <div className="absolute inset-0 bg-gradient-to-br from-indigo-500/5 via-purple-500/5 to-slate-500/5 pointer-events-none"></div>
             <div className="absolute -top-40 -right-40 w-80 h-80 bg-indigo-500/10 rounded-full filter blur-3xl pointer-events-none"></div>
@@ -487,34 +573,48 @@ export default function Dashboard() {
 
             <div className="max-w-7xl mx-auto px-4 sm:px-6 md:px-8 space-y-8">
               <div className="flex items-center justify-between">
-                <h1 className="text-2xl font-semibold text-white">
-                  {activeSection === "overview" ? "Dashboard" :
-                   activeSection === "channels" ? "Channel Management" :
-                   activeSection === "analytics" ? "Analytics" :
-                   activeSection === "rights" ? "Digital Rights" :
-                   "Global Distribution"}
+                <h1
+                  onMouseEnter={() => {
+                    setShowNotifications(false);
+                    setShowSettings(false);
+                  }}
+                  className="text-2xl font-semibold text-white w-full"
+                >
+                  {activeSection === "overview"
+                    ? "Dashboard"
+                    : activeSection === "channels"
+                    ? "Channel Management"
+                    : activeSection === "analytics"
+                    ? "Analytics"
+                    : activeSection === "rights"
+                    ? "Digital Rights"
+                    : "Global Distribution"}
                 </h1>
-                <div className="flex items-center gap-6">
+                <div className="flex items-center">
                   <div
-                    className="notifications-button p-2 rounded-full text-slate-400 hover:text-white hover:bg-slate-700/50 transition-all duration-200 hover:scale-110 relative"
-                    onClick={() => {
-                      const hasUnread = notifications.some(n => !n.read);
-                      setShowNotifications(!showNotifications);
+                    onMouseEnter={() => {
                       setShowSettings(false);
-                      if (hasUnread) {
-                        setHasNewNotification(false);
-                      }
                     }}
+                    className="notifications-button mx-2 p-2 rounded-full text-slate-400 hover:text-white hover:bg-slate-700/50 transition-all duration-200 hover:scale-110 relative"
                   >
-                    <Bell className={`h-6 w-6 transition-all duration-300 ${
-                      notifications.some(n => !n.read) ? 'text-white animate-pulse filter drop-shadow-[0_0_15px_rgba(255,255,255,0.8)]' : 'text-slate-400'
-                    }`} />
-                    
+                    <Bell
+                      onClick={() => {
+                        setShowNotifications((prev) => !prev);
+                      }}
+                      className={`h-6 w-6 transition-all duration-300 ${
+                        notifications.some((n) => !n.read)
+                          ? "text-white animate-pulse filter drop-shadow-[0_0_15px_rgba(255,255,255,0.8)]"
+                          : "text-slate-400"
+                      }`}
+                    />
+
                     {/* Notifications Dropdown */}
                     {showNotifications && (
-                      <div className="notifications-dropdown fixed right-4 top-20 w-96 bg-slate-800/95 backdrop-blur-sm rounded-xl shadow-xl border border-slate-700/50 z-[100] transform transition-all duration-300 animate-custom-enter">
+                      <div className="dropdown fixed right-4 top-20 w-96 bg-slate-800/95 backdrop-blur-sm rounded-xl shadow-xl border border-slate-700/50 z-[2147483647] transform transition-all duration-300 animate-custom-enter">
                         <div className="p-4 border-b border-slate-700 flex justify-between items-center">
-                          <h3 className="text-white font-semibold">Notifications</h3>
+                          <h3 className="text-white font-semibold">
+                            Notifications
+                          </h3>
                           <div className="flex gap-2">
                             <button
                               onClick={markAllAsRead}
@@ -536,16 +636,22 @@ export default function Dashboard() {
                               No notifications
                             </div>
                           ) : (
-                            notifications.map(notification => (
+                            notifications.map((notification) => (
                               <div
                                 key={notification.id}
                                 className={`p-4 border-b border-slate-700 hover:bg-slate-700/50 transition-all duration-300 ${
-                                  !notification.read ? 'bg-indigo-500/5' : ''
+                                  !notification.read ? "bg-indigo-500/5" : ""
                                 }`}
                               >
-                                <h4 className="text-white font-medium">{notification.title}</h4>
-                                <p className="text-slate-400 text-sm mt-1">{notification.content}</p>
-                                <p className="text-slate-500 text-xs mt-2">{notification.time}</p>
+                                <h4 className="text-white font-medium">
+                                  {notification.title}
+                                </h4>
+                                <p className="text-slate-400 text-sm mt-1">
+                                  {notification.content}
+                                </p>
+                                <p className="text-slate-500 text-xs mt-2">
+                                  {notification.time}
+                                </p>
                               </div>
                             ))
                           )}
@@ -554,17 +660,20 @@ export default function Dashboard() {
                     )}
                   </div>
                   <div
-                    className="settings-button p-2 rounded-full text-slate-400 hover:text-white hover:bg-slate-700/50 transition-all duration-200 hover:scale-110 relative"
+                    className="settings-button p-2 mr-2 rounded-full text-slate-400 hover:text-white hover:bg-slate-700/50 transition-all duration-200 hover:scale-110 relative"
+                    onMouseEnter={() => {
+                      setShowNotifications(false);
+                    }}
                     onClick={() => {
                       setShowSettings(!showSettings);
                       setShowNotifications(false);
                     }}
                   >
                     <Settings className="h-6 w-6" />
-                    
+
                     {/* Settings Dropdown */}
                     {showSettings && (
-                      <div className="settings-dropdown fixed right-4 top-20 w-80 bg-slate-800/95 backdrop-blur-sm rounded-xl shadow-xl border border-slate-700 z-[100]">
+                      <div className="settings-dropdown fixed right-4 top-20 w-80 bg-slate-800/95 backdrop-blur-sm rounded-xl shadow-xl border border-slate-700 z-[2147483647]">
                         <div className="p-4 border-b border-slate-700">
                           <h3 className="text-white font-semibold">Settings</h3>
                         </div>
@@ -573,7 +682,9 @@ export default function Dashboard() {
                           <div className="space-y-3">
                             <div className="flex items-center justify-between">
                               <span className="text-slate-400">Name</span>
-                              <span className="text-white">{user?.user_metadata?.full_name}</span>
+                              <span className="text-white">
+                                {user?.user_metadata?.full_name}
+                              </span>
                             </div>
                             <div className="flex items-center justify-between">
                               <span className="text-slate-400">Email</span>
@@ -583,19 +694,25 @@ export default function Dashboard() {
                               Change Password
                             </button>
                           </div>
-                          
+
                           <div className="border-t border-slate-700 pt-4">
-                            <h4 className="text-white font-medium mb-3">Security</h4>
+                            <h4 className="text-white font-medium mb-3">
+                              Security
+                            </h4>
                             <div className="flex items-center justify-between">
-                              <span className="text-slate-400">Two-Factor Authentication</span>
+                              <span className="text-slate-400">
+                                Two-Factor Authentication
+                              </span>
                               <button className="text-indigo-400 hover:text-indigo-300 transition-colors">
                                 Enable
                               </button>
                             </div>
                           </div>
-                          
+
                           <div className="border-t border-slate-700 pt-4">
-                            <h4 className="text-white font-medium mb-3">Preferences</h4>
+                            <h4 className="text-white font-medium mb-3">
+                              Preferences
+                            </h4>
                             <div className="space-y-3">
                               <div className="flex items-center justify-between">
                                 <span className="text-slate-400">Language</span>
@@ -615,7 +732,7 @@ export default function Dashboard() {
                               </div>
                             </div>
                           </div>
-                          
+
                           <div className="border-t border-slate-700 pt-4">
                             <button
                               onClick={handleSignOut}
@@ -630,19 +747,27 @@ export default function Dashboard() {
                     )}
                   </div>
                   <Link
+                    onMouseEnter={() => {
+                      setShowNotifications(false);
+                      setShowSettings(false);
+                    }}
                     to="/messages"
                     className="p-2 rounded-full text-slate-400 hover:text-white hover:bg-slate-700/50 transition-all duration-200 hover:scale-110"
                   >
-                    <MessageSquare className={`h-6 w-6 transition-all duration-300 ${
-                      hasUnreadMessages ? 'text-white animate-pulse filter drop-shadow-[0_0_15px_rgba(255,255,255,0.8)]' : 'text-slate-400'
-                    }`} />
+                    <MessageSquare
+                      className={`h-6 w-6 transition-all duration-300 ${
+                        hasUnreadMessages
+                          ? "text-white animate-pulse filter drop-shadow-[0_0_15px_rgba(255,255,255,0.8)]"
+                          : "text-slate-400"
+                      }`}
+                    />
                   </Link>
                 </div>
               </div>
 
               {/* Main Content Area */}
               {activeSection === "overview" && (
-                <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
+                <div className="cards-dashboard grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4 relative z-[1]">
                   {/* Views Card */}
                   <div className="bg-slate-800/90 backdrop-blur-sm rounded-xl p-6 border border-slate-700/50 shadow-xl hover:shadow-indigo-500/10 transform hover:scale-105 transition-all duration-300">
                     <div className="flex items-center">
@@ -651,7 +776,10 @@ export default function Dashboard() {
                       </div>
                       <div className="ml-4">
                         <p className="text-sm font-medium text-slate-400">
-                          {new Date().toLocaleString('default', { month: 'long' })} Views
+                          {new Date().toLocaleString("default", {
+                            month: "long",
+                          })}{" "}
+                          Views
                         </p>
                         <p className="text-2xl font-semibold text-white">
                           {monthlyViews.toLocaleString()}
@@ -670,7 +798,9 @@ export default function Dashboard() {
                         <p className="text-sm font-medium text-slate-400">
                           Active Channels
                         </p>
-                        <p className="text-2xl font-semibold text-white">{linkedChannels}</p>
+                        <p className="text-2xl font-semibold text-white">
+                          {linkedChannels}
+                        </p>
                       </div>
                     </div>
                   </div>
@@ -685,7 +815,9 @@ export default function Dashboard() {
                         <p className="text-sm font-medium text-slate-400">
                           Revenue
                         </p>
-                        <p className="text-2xl font-semibold text-white whitespace-nowrap">$156K</p>
+                        <p className="text-2xl font-semibold text-white whitespace-nowrap">
+                          $156K
+                        </p>
                       </div>
                     </div>
                   </div>
@@ -716,8 +848,8 @@ export default function Dashboard() {
                         onClick={() => setSelectedChannel(channel)}
                         className={`w-full p-6 rounded-xl transition-all duration-300 ${
                           selectedChannel?.url === channel.url
-                            ? 'bg-indigo-600 shadow-lg shadow-indigo-500/20'
-                            : 'bg-slate-800 hover:bg-slate-700'
+                            ? "bg-indigo-600 shadow-lg shadow-indigo-500/20"
+                            : "bg-slate-800 hover:bg-slate-700"
                         }`}
                       >
                         <div className="flex items-center mb-4">
@@ -726,9 +858,9 @@ export default function Dashboard() {
                           </div>
                           <div className="ml-3 text-left">
                             <p className="text-white font-medium truncate">
-                              {channel.url.replace('https://youtube.com/', '')}
+                              {channel.url.replace("https://youtube.com/", "")}
                             </p>
-                            <a 
+                            <a
                               href={channel.url}
                               target="_blank"
                               rel="noopener noreferrer"
@@ -742,7 +874,9 @@ export default function Dashboard() {
                         </div>
                         <div className="grid grid-cols-2 gap-4">
                           <div>
-                            <p className="text-sm text-slate-400">Monthly Views</p>
+                            <p className="text-sm text-slate-400">
+                              Monthly Views
+                            </p>
                             <p className="text-lg font-semibold text-white">
                               {channel.monthlyViews.toLocaleString()}
                             </p>
@@ -761,7 +895,9 @@ export default function Dashboard() {
                   {/* Selected Channel Analytics */}
                   {selectedChannel && (
                     <div className="bg-slate-800 rounded-xl p-6">
-                      <h3 className="text-lg font-semibold text-white mb-4">Channel Analytics</h3>
+                      <h3 className="text-lg font-semibold text-white mb-4">
+                        Channel Analytics
+                      </h3>
                       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                         <div className="bg-slate-700/50 rounded-xl p-4">
                           <div className="flex items-center">
@@ -769,7 +905,9 @@ export default function Dashboard() {
                               <Eye className="h-6 w-6 text-blue-400" />
                             </div>
                             <div className="ml-4">
-                              <p className="text-sm text-slate-400">Total Views</p>
+                              <p className="text-sm text-slate-400">
+                                Total Views
+                              </p>
                               <p className="text-xl font-semibold text-white">
                                 {selectedChannel.views.toLocaleString()}
                               </p>
@@ -783,7 +921,9 @@ export default function Dashboard() {
                               <BarChart2 className="h-6 w-6 text-green-400" />
                             </div>
                             <div className="ml-4">
-                              <p className="text-sm text-slate-400">Monthly Views</p>
+                              <p className="text-sm text-slate-400">
+                                Monthly Views
+                              </p>
                               <p className="text-xl font-semibold text-white">
                                 {selectedChannel.monthlyViews.toLocaleString()}
                               </p>
@@ -797,7 +937,9 @@ export default function Dashboard() {
                               <User className="h-6 w-6 text-purple-400" />
                             </div>
                             <div className="ml-4">
-                              <p className="text-sm text-slate-400">Subscribers</p>
+                              <p className="text-sm text-slate-400">
+                                Subscribers
+                              </p>
                               <p className="text-xl font-semibold text-white">
                                 {selectedChannel.subscribers.toLocaleString()}
                               </p>
@@ -825,7 +967,9 @@ export default function Dashboard() {
               )}
               {activeSection !== "overview" && activeSection !== "channels" && (
                 <div className="bg-slate-800 rounded-xl p-12 text-center">
-                  <h3 className="text-xl font-semibold text-white mb-2">Coming Soon</h3>
+                  <h3 className="text-xl font-semibold text-white mb-2">
+                    Coming Soon
+                  </h3>
                   <p className="text-slate-400">
                     This section is currently under development
                   </p>

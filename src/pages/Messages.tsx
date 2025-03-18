@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Link } from "react-router-dom";
 import { ArrowLeft, MessageSquare } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
@@ -25,6 +25,11 @@ export default function Messages() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   // Simplified messages fetching - only get messages between user and admin
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Add this function after state declarations
+
+  // Add this effect to scroll when messages update
 
   // Simplified admin user fetching - only get the admin user
 
@@ -87,16 +92,6 @@ export default function Messages() {
 
       try {
         fetchUsers();
-        const { data: adminUsers, error } =
-          await supabase.auth.admin.listUsers();
-        if (error) throw error;
-
-        const admin = adminUsers.users.find(
-          (u) => u.user_metadata?.role === "admin"
-        );
-        if (admin) {
-          setAdminUser(admin as AdminUser);
-        }
       } catch (error) {
         console.error("Error loading admin user:", error);
       } finally {
@@ -166,7 +161,6 @@ export default function Messages() {
   };
   const ImagePreview = () => {
     if (!previewImage) return null;
-
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
         <div className="relative max-w-[90vw] max-h-[90vh]">
@@ -229,7 +223,6 @@ export default function Messages() {
     );
   };
   // Add new interfaces at the top
-
   // Add new state for users and selected user
   const [users, setUsers] = useState<any[]>([]);
   const [selectedUser, setSelectedUser] = useState<any | null>(null);
@@ -282,6 +275,16 @@ export default function Messages() {
       subscription.unsubscribe();
     };
   }, [user, selectedUser]);
+  useEffect(() => {
+    if (messages.length > 0) {
+      const messageContainer = document.querySelector(".messages-container");
+      if (messageContainer) {
+        setTimeout(() => {
+          messageContainer.scrollTop = messageContainer.scrollHeight;
+        }, 100);
+      }
+    }
+  }, [messages]);
   // Modify the admin return statement to include the user list
   if (isAdmin) {
     return (
@@ -354,7 +357,7 @@ export default function Messages() {
                     </div>
                   </div>
 
-                  <div className="flex-1 overflow-y-auto p-4">
+                  <div className="flex-1 overflow-y-auto p-4 messages-container">
                     {isLoading ? (
                       <div className="flex items-center justify-center h-full">
                         <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-indigo-500"></div>
@@ -370,6 +373,7 @@ export default function Messages() {
                         )}
                       </div>
                     )}
+                    <div style={{ height: 1 }} ref={messagesEndRef}></div>
                   </div>
 
                   <div className="p-4 border-t border-slate-700/50">
@@ -383,7 +387,7 @@ export default function Messages() {
                           if (
                             e.key === "Enter" &&
                             !e.shiftKey &&
-                            newMessage.trim()
+                            (newMessage.trim() || selectedFile)
                           ) {
                             e.preventDefault();
                             handleSendMessage();
@@ -468,7 +472,7 @@ export default function Messages() {
             </div>
           </div>
 
-          <div className="flex-1 overflow-y-auto p-4">
+          <div className="flex-1 overflow-y-auto p-4 messages-container">
             {isLoading ? (
               <div className="flex items-center justify-center h-full">
                 <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-indigo-500"></div>
@@ -482,6 +486,8 @@ export default function Messages() {
                     No messages yet. Start a conversation!
                   </div>
                 )}
+
+                <div style={{ height: 1 }} ref={messagesEndRef}></div>
               </div>
             )}
           </div>
@@ -494,7 +500,11 @@ export default function Messages() {
                 value={newMessage}
                 onChange={(e) => setNewMessage(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey && newMessage.trim()) {
+                  if (
+                    e.key === "Enter" &&
+                    !e.shiftKey &&
+                    (newMessage.trim() || selectedFile)
+                  ) {
                     e.preventDefault();
                     handleSendMessage();
                   }

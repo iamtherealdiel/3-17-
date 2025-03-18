@@ -107,3 +107,13 @@
     background-position: 0% 50%;
   }
 }
+.settings-dropdown,
+.notifications-dropdown {
+  z-index: 2!important;
+  position: absolute!important;
+}
+
+.cards-dashboard {
+  z-index:  0!important;
+  position: relative!important;
+}
