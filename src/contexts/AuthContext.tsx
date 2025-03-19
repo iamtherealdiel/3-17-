@@ -48,6 +48,7 @@ const showUniqueToast = (
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const [isRedirected, setIsRedirected] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [hasShownVerification, setHasShownVerification] = useState(false);
   const navigate = useNavigate();
@@ -73,7 +74,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
 
         // If user is verified, redirect to dashboard
-        if (currentUser?.email_confirmed_at) {
+        if (currentUser?.email_confirmed_at && !isRedirected) {
+          setIsRedirected(true);
           navigate("/dashboard", { replace: true });
         }
         if (isAdmin) {
@@ -115,13 +117,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         );
         navigate("/dashboard", { replace: true });
       }
-
-      // If user is verified, redirect to dashboard
-      if (currentUser?.email_confirmed_at) {
-        navigate("/dashboard", { replace: true });
-      }
       // Only redirect to admin panel if not already on messages page
-      if (isAdmin && !location.pathname.includes('/messages')) {
+      if (isAdmin && !location.pathname.includes("/messages")) {
         setLoading(false);
         navigate("/purple");
       }
@@ -205,7 +202,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       navigate("/dashboard");
       // Only redirect to admin panel if not already on messages page
-      if (isAdmin && !location.pathname.includes('/messages')) {
+      if (isAdmin && !location.pathname.includes("/messages")) {
         setLoading(false);
         navigate("/purple");
       }

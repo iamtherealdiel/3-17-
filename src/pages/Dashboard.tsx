@@ -27,6 +27,7 @@ import {
   BarChart2,
 } from "lucide-react";
 import OnboardingPopup from "../components/OnboardingPopup";
+import Swal from "sweetalert2";
 
 interface Channel {
   url: string;
@@ -252,7 +253,25 @@ export default function Dashboard() {
       return () => clearTimeout(timer);
     }
   }, [notifications]);
+  /*   useEffect(() => {
+    if (activeSection === "channels") {
+      const getChannels = async () => {
+        const { data, error } = await supabase
+          .from("channel")
+          .select("*")
+          .eq("user_id", user?.id);
 
+        if (error) {
+          console.error("Error fetching channels:", error);
+          return;
+        }
+
+        setChannels(data || []);
+      };
+
+      getChannels();
+    }
+  }, [activeSection]); */
   const handleSignOut = async () => {
     try {
       await signOut();
@@ -376,7 +395,35 @@ export default function Dashboard() {
     accountType: "Pro User",
     contentCount: 156,
   };
+  useEffect(() => {
+    if (!user) return;
 
+    // Subscribe to notifications
+    console.log(user);
+    supabase.channel("notifications").on(
+      "postgres_changes",
+      {
+        event: "*",
+        schema: "public",
+        table: "notifications",
+      },
+      (payload) => {
+        // Handle notification changes
+        console.log(payload);
+      }
+    );
+  }, [user]);
+
+  const showNotification = (notification) => {
+    Swal.fire({
+      title: notification.title,
+
+      text: notification.content,
+
+      icon: "info",
+      confirmButtonText: "Okay",
+    });
+  };
   if (isLoading) {
     return (
       <div className="min-h-screen bg-slate-900 flex items-center justify-center">
@@ -590,16 +637,16 @@ export default function Dashboard() {
                     ? "Digital Rights"
                     : "Global Distribution"}
                 </h1>
-                <div className="flex items-center">
+                <div className="flex items-center relative z-50">
+                  {/* Added relative positioning and z-50 */}
                   <div
-                    onMouseEnter={() => {
-                      setShowSettings(false);
-                    }}
                     className="notifications-button mx-2 p-2 rounded-full text-slate-400 hover:text-white hover:bg-slate-700/50 transition-all duration-200 hover:scale-110 relative"
+                    data-popover-target="notifications-popover"
                   >
                     <Bell
                       onClick={() => {
                         setShowNotifications((prev) => !prev);
+                        setShowSettings(false); // Close settings when opening notifications
                       }}
                       className={`h-6 w-6 transition-all duration-300 ${
                         notifications.some((n) => !n.read)
@@ -610,7 +657,7 @@ export default function Dashboard() {
 
                     {/* Notifications Dropdown */}
                     {showNotifications && (
-                      <div className="dropdown fixed right-4 top-20 w-96 bg-slate-800/95 backdrop-blur-sm rounded-xl shadow-xl border border-slate-700/50 z-[2147483647] transform transition-all duration-300 animate-custom-enter">
+                      <div className="dropdown absolute right-0 top-full mt-2 w-96 bg-slate-800/95 backdrop-blur-sm rounded-xl shadow-xl border border-slate-700/50 transform transition-all duration-300 animate-custom-enter">
                         <div className="p-4 border-b border-slate-700 flex justify-between items-center">
                           <h3 className="text-white font-semibold">
                             Notifications
@@ -673,7 +720,7 @@ export default function Dashboard() {
 
                     {/* Settings Dropdown */}
                     {showSettings && (
-                      <div className="settings-dropdown fixed right-4 top-20 w-80 bg-slate-800/95 backdrop-blur-sm rounded-xl shadow-xl border border-slate-700 z-[2147483647]">
+                      <div className="settings-dropdown absolute right-0 top-full mt-2 w-80 bg-slate-800/95 backdrop-blur-sm rounded-xl shadow-xl border border-slate-700">
                         <div className="p-4 border-b border-slate-700">
                           <h3 className="text-white font-semibold">Settings</h3>
                         </div>
